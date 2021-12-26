@@ -1,6 +1,7 @@
 /* GPLv2 (c) Airbus */
 #include <cr.h>
 #include <info.h>
+#include <intr.h>
 #include <debug.h>
 #include <segmem.h>
 #include <pagemem.h>
@@ -55,12 +56,16 @@ void setup_memory_segments()
     limit : sizeof(gdt) - 1
   };
 
-  gdt[0].raw = 0ULL;
+  memset(&tss, 0, sizeof tss);
+  tss.s0.esp = get_ebp();
+  tss.s0.ss = gdt_krn_seg_sel(RING0_DATA_ENTRY);
 
-  gdt_flat_dsc(&gdt[RING0_CODE_ENTRY], 0, SEG_DESC_CODE_XR);
-  gdt_flat_dsc(&gdt[RING0_DATA_ENTRY], 0, SEG_DESC_DATA_RW);
-  gdt_flat_dsc(&gdt[RING3_CODE_ENTRY], 3, SEG_DESC_CODE_XR);
-  gdt_flat_dsc(&gdt[RING3_DATA_ENTRY], 3, SEG_DESC_DATA_RW);
+  gdt[0].raw = 0ULL;
+  gdt_flat_dsc(&gdt[RING0_CODE_ENTRY], SEG_SEL_KRN, SEG_DESC_CODE_XR);
+  gdt_flat_dsc(&gdt[RING0_DATA_ENTRY], SEG_SEL_KRN, SEG_DESC_DATA_RW);
+  gdt_flat_dsc(&gdt[RING3_CODE_ENTRY], SEG_SEL_USR, SEG_DESC_CODE_XR);
+  gdt_flat_dsc(&gdt[RING3_DATA_ENTRY], SEG_SEL_USR, SEG_DESC_DATA_RW);
+  tss_dsc(&gdt[TSS_ENTRY], (offset_t)&tss);
 
   set_gdtr(gdtr);
 
@@ -97,7 +102,7 @@ void setup_memory_pages()
 
 void userland()
 {
-  // asm volatile("int 0x80;");
+  asm volatile("int $0x80;");
   while (1)
     ;
 }
@@ -108,11 +113,6 @@ void test_user()
   set_es(gdt_usr_seg_sel(RING3_DATA_ENTRY));
   set_fs(gdt_usr_seg_sel(RING3_DATA_ENTRY));
   set_gs(gdt_usr_seg_sel(RING3_DATA_ENTRY));
-
-  memset(&tss, 0, sizeof tss);
-  tss.s0.esp = get_ebp();
-  tss.s0.ss = gdt_krn_seg_sel(RING0_DATA_ENTRY);
-  tss_dsc(&gdt[TSS_ENTRY], (offset_t)&tss);
   set_tr(gdt_krn_seg_sel(TSS_ENTRY));
 
   asm volatile(
@@ -128,9 +128,28 @@ void test_user()
   );
 }
 
+void handle_syscall()
+{
+  while (1)
+    ;
+}
+
+void setup_interruption_registry()
+{
+  idt_reg_t idtr;
+  get_idtr(idtr);
+  int_desc_t *idt = idtr.desc;
+
+  int_desc(&idt[0x80], gdt_krn_seg_sel(RING0_CODE_ENTRY), (offset_t)handle_syscall);
+  // Many thanks to Elies (@EyeXion) for this very simple line,
+  // yet the cause of about two days of frustration
+  idt[0x80].dpl = SEG_SEL_USR;
+}
+
 void tp()
 {
   // setup_memory_pages();
   setup_memory_segments();
+  setup_interruption_registry();
   test_user();
 }
