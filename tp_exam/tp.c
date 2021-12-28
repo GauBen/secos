@@ -100,9 +100,19 @@ void setup_memory_pages()
   set_cr0(get_cr0() | CR0_PG | CR0_PE);
 }
 
+void sys_counter(uint32_t *counter)
+{
+  asm volatile(
+      "mov %0, %%eax\n"
+      "int $0x80\n"
+      :
+      : "r"(counter));
+}
+
 void userland()
 {
-  asm volatile("int $0x80;");
+  uint32_t x = 10;
+  sys_counter(&x);
   while (1)
     ;
 }
@@ -116,22 +126,37 @@ void test_user()
   set_tr(gdt_krn_seg_sel(TSS_ENTRY));
 
   asm volatile(
-      "push %0    \n" // ss
-      "push %%ebp \n" // esp
-      "pushf      \n" // eflags
-      "push %1    \n" // cs
-      "push %2    \n" // eip
-      "iret" ::
-          "i"(gdt_usr_seg_sel(RING3_DATA_ENTRY)), //ss
-      "i"(gdt_usr_seg_sel(RING3_CODE_ENTRY)),     //cs
-      "r"(&userland)                              //eip
+      "push %0\n"    // ss
+      "push %%ebp\n" // esp
+      "pushf\n"      // eflags
+      "push %1\n"    // cs
+      "push %2\n"    // eip
+      "iret\n"
+      :
+      : "i"(gdt_usr_seg_sel(RING3_DATA_ENTRY)), // ss
+        "i"(gdt_usr_seg_sel(RING3_CODE_ENTRY)), // cs
+        "r"(&userland)                          // eip
   );
 }
 
 void handle_syscall()
 {
-  while (1)
-    ;
+  asm volatile("pusha\n");
+
+  uint32_t *ptr;
+
+  asm volatile(
+      "mov %%eax, %0\n"
+      : "=r"(ptr));
+
+  // The address is right, but the value is currently overwritten
+  // at some point in the execution
+  debug("int 0x80 caught! Addr: %p, value: %d\n", ptr, *ptr);
+
+  asm volatile(
+      "popa\n"
+      "leave\n"
+      "iret\n");
 }
 
 void setup_interruption_registry()
