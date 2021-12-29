@@ -283,4 +283,29 @@ typedef struct task_state_segment
 #define set_cs(_cs)               \
    asm volatile ("ljmp  %0, $1f ; 1:"::"i"(_cs))
 
+#define gdt_flat_dsc(_entry, _ring, _type) \
+  {                                        \
+    (_entry)->raw = 0;                     \
+    (_entry)->limit_1 = 0xffff;            \
+    (_entry)->limit_2 = 0xf;               \
+    (_entry)->type = _type;                \
+    (_entry)->dpl = _ring;                 \
+    (_entry)->d = 1;                       \
+    (_entry)->g = 1;                       \
+    (_entry)->s = 1;                       \
+    (_entry)->p = 1;                       \
+  }
+
+#define tss_dsc(_entry, _addr)                \
+  {                                           \
+    raw32_t __addr = {.raw = _addr};          \
+    (_entry)->raw = sizeof(tss_t);            \
+    (_entry)->base_1 = __addr.wlow;           \
+    (_entry)->base_2 = __addr._whigh.blow;    \
+    (_entry)->base_3 = __addr._whigh.bhigh;   \
+    (_entry)->type = SEG_DESC_SYS_TSS_AVL_32; \
+    (_entry)->p = 1;                          \
+  }
+
+
 #endif
