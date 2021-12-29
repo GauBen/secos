@@ -20,8 +20,11 @@ __attribute__((aligned(8))) seg_desc_t gdt[GDT_LIMIT];
 __attribute__((aligned(8))) tss_t tss;
 
 // Paging settings
-#define PGD_ADDR 0x600000
-#define PTB_ADDR 0x601000
+#define KERNEL_PGD_ADDR 0x600000
+#define KERNEL_PTB_ADDR 0x601000
+
+#define USER1_PGD_ADDR 0x603000
+#define USER1_PTB_ADDR 0x604000
 
 extern info_t *info;
 
@@ -54,9 +57,8 @@ void setup_memory_segments()
 }
 
 /** Enables memory paging with identity mapping. */
-void setup_memory_pages()
+void setup_memory_pages(pde32_t *pgd, pte32_t *first_ptb, unsigned int flags)
 {
-  pde32_t *pgd = (pde32_t *)PGD_ADDR;
   memset(pgd, 0, PAGE_SIZE);
 
   // Setup identity paging (see https://wiki.osdev.org/Identity_Paging)
@@ -64,16 +66,15 @@ void setup_memory_pages()
   for (int entry = 0; entry <= 1; entry++)
   {
     // ptb address = base address + entry num * page size
-    pte32_t *ptb = (pte32_t *)(PTB_ADDR + entry * 4096);
+    pte32_t *ptb = first_ptb + entry * 4096;
     for (int i = 0; i < 1024; i++)
-      pg_set_entry(&ptb[i], PG_KRN | PG_RW, i + entry * 1024);
+      pg_set_entry(&ptb[i], flags, i + entry * 1024);
     // Add the page table to the page directory
-    pg_set_entry(&pgd[entry], PG_KRN | PG_RW, page_nr(ptb));
+    pg_set_entry(&pgd[entry], flags, page_nr(ptb));
   }
 
   // Enable paging (see https://wiki.osdev.org/Paging#Enabling)
   set_cr3(pgd);
-  set_cr0(get_cr0() | CR0_PG | CR0_PE);
 }
 
 void sys_counter(uint32_t *counter)
@@ -89,6 +90,10 @@ void userland()
 {
   uint32_t x = 10;
   sys_counter(&x);
+  x++;
+  sys_counter(&x);
+  x++;
+  sys_counter(&x);
   while (1)
     ;
 }
@@ -101,17 +106,22 @@ void test_user()
   set_gs(gdt_usr_seg_sel(RING3_DATA_ENTRY));
   set_tr(gdt_krn_seg_sel(TSS_ENTRY));
 
+  setup_memory_pages((pde32_t *)USER1_PGD_ADDR, (pte32_t *)USER1_PTB_ADDR, PG_USR | PG_RW);
+
+  tss.s0.esp = 0x7f0000;
+
   asm volatile(
-      "push %0\n"    // ss
-      "push %%ebp\n" // esp
-      "pushf\n"      // eflags
-      "push %1\n"    // cs
-      "push %2\n"    // eip
+      "push %0\n" // ss
+      "push %1\n" // esp
+      "pushf\n"   // eflags
+      "push %2\n" // cs
+      "push %3\n" // eip
       "iret\n"
       :
-      : "i"(gdt_usr_seg_sel(RING3_DATA_ENTRY)), // ss
-        "i"(gdt_usr_seg_sel(RING3_CODE_ENTRY)), // cs
-        "r"(&userland)                          // eip
+      : "irm"(gdt_usr_seg_sel(RING3_DATA_ENTRY)), // ss
+        "irm"(0x7c0000),                          // esp
+        "irm"(gdt_usr_seg_sel(RING3_CODE_ENTRY)), // cs
+        "irm"(&userland)                          // eip
   );
 }
 
@@ -149,7 +159,9 @@ void setup_interruption_registry()
 
 void tp()
 {
-  // setup_memory_pages();
+  setup_memory_pages((pde32_t *)KERNEL_PGD_ADDR, (pte32_t *)KERNEL_PTB_ADDR, PG_KRN | PG_RW);
+  set_cr0(get_cr0() | CR0_PG | CR0_PE);
+
   setup_memory_segments();
   setup_interruption_registry();
   test_user();
