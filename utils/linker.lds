@@ -30,13 +30,12 @@ SECTIONS
   /* Kernel end should be around 0x10bfff */
   __kernel_end__ = .;
 
-  /* All page directories/tables will be between 0x30_0000 and 0x3f_ffff */
+  /* Kernel page directories/tables will be between 0x30_0000 and 0x3f_ffff */
   . = 0x300000;
   __page_directories_start__ = .;
 
   /* Task 1 will be between 0x40_0000 and 0x4f_ffff */
   . = 0x400000;
-  __task_start__ = .;
   .user1 : { KEEP(*(.user1)) } : phsetup
 
   /* Task 2 will be between 0x50_0000 and 0x5f_ffff */

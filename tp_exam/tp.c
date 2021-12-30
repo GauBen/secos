@@ -20,13 +20,19 @@ __attribute__((aligned(8))) seg_desc_t gdt[GDT_LIMIT];
 __attribute__((aligned(8))) tss_t tss;
 
 // Paging settings
-#define KERNEL_PGD_ADDR 0x600000
-#define KERNEL_PTB_ADDR 0x601000
+#define KERNEL_PGD_ADDR __page_directories_start__
+#define KERNEL_PTB_ADDR __page_directories_start__ + 0x1000
 
-#define USER1_PGD_ADDR 0x603000
-#define USER1_PTB_ADDR 0x604000
+#define USER_CODE_OFFSET 0x00000
+#define USER_PGD_OFFSET 0xc0000
+#define USER_PTB_OFFSET 0xc1000
+#define USER_STACK_OFFSET 0xe0000
+#define USER_STACK_START_OFFSET 0xefff0
+#define USER_KERNEL_STACK_OFFSET 0xf0000
+#define USER_KERNEL_STACK_START_OFFSET 0xffff0
 
 extern info_t *info;
+extern void *__page_directories_start__;
 
 void setup_memory_segments()
 {
@@ -80,33 +86,6 @@ void setup_memory_pages(pde32_t *pgd, pte32_t *first_ptb, unsigned int flags)
 void print_counter();
 void increment_counter();
 
-void test_user()
-{
-  set_ds(gdt_usr_seg_sel(RING3_DATA_ENTRY));
-  set_es(gdt_usr_seg_sel(RING3_DATA_ENTRY));
-  set_fs(gdt_usr_seg_sel(RING3_DATA_ENTRY));
-  set_gs(gdt_usr_seg_sel(RING3_DATA_ENTRY));
-  set_tr(gdt_krn_seg_sel(TSS_ENTRY));
-
-  setup_memory_pages((pde32_t *)USER1_PGD_ADDR, (pte32_t *)USER1_PTB_ADDR, PG_USR | PG_RW);
-
-  tss.s0.esp = 0x7f0000;
-
-  asm volatile(
-      "push %0\n" // ss
-      "push %1\n" // esp
-      "pushf\n"   // eflags
-      "push %2\n" // cs
-      "push %3\n" // eip
-      "iret\n"
-      :
-      : "irm"(gdt_usr_seg_sel(RING3_DATA_ENTRY)), // ss
-        "irm"(0x7c0000),                          // esp
-        "irm"(gdt_usr_seg_sel(RING3_CODE_ENTRY)), // cs
-        "irm"(&print_counter)                     // eip
-  );
-}
-
 void handle_syscall()
 {
   asm volatile("pusha\n");
@@ -119,7 +98,7 @@ void handle_syscall()
 
   // The address is right, but the value is currently overwritten
   // at some point in the execution
-  debug("int 0x80 caught! Addr: %p, value: %d\n", ptr, *ptr);
+  debug("int 0x80 caught! Addr: %p, value: %d, ebp: %p\n", ptr, *ptr, get_ebp());
 
   asm volatile(
       "popa\n"
@@ -139,14 +118,43 @@ void setup_interruption_registry()
   idt[0x80].dpl = SEG_SEL_USR;
 }
 
+void setup_task(uint32_t user_task)
+{
+  debug("%p\n", user_task);
+  setup_memory_pages(
+      (pde32_t *)(user_task + USER_PGD_OFFSET),
+      (pte32_t *)(user_task + USER_PTB_OFFSET),
+      PG_USR | PG_RW);
+
+  uint32_t *user_kernel_esp = (uint32_t *)(user_task + USER_KERNEL_STACK_START_OFFSET);
+
+  // Prepare the stack for an `iret`
+  *(user_kernel_esp - 1) = gdt_usr_seg_sel(RING3_DATA_ENTRY);
+  *(user_kernel_esp - 2) = user_task + USER_STACK_START_OFFSET;
+  *(user_kernel_esp - 3) = 0;
+  *(user_kernel_esp - 4) = gdt_usr_seg_sel(RING3_CODE_ENTRY);
+  *(user_kernel_esp - 5) = user_task;
+}
+
 void tp()
 {
-  debug("%p %p\n", increment_counter, print_counter);
-
   setup_memory_pages((pde32_t *)KERNEL_PGD_ADDR, (pte32_t *)KERNEL_PTB_ADDR, PG_KRN | PG_RW);
   set_cr0(get_cr0() | CR0_PG | CR0_PE);
 
   setup_memory_segments();
   setup_interruption_registry();
-  test_user();
+  setup_task((uint32_t)increment_counter);
+  setup_task((uint32_t)print_counter);
+
+  set_ds(gdt_usr_seg_sel(RING3_DATA_ENTRY));
+  set_es(gdt_usr_seg_sel(RING3_DATA_ENTRY));
+  set_fs(gdt_usr_seg_sel(RING3_DATA_ENTRY));
+  set_gs(gdt_usr_seg_sel(RING3_DATA_ENTRY));
+  tss.s0.ss = gdt_krn_seg_sel(RING0_DATA_ENTRY);
+  uint32_t user_kernel_esp = (uint32_t)increment_counter + USER_KERNEL_STACK_START_OFFSET - 20;
+  tss.s0.esp = user_kernel_esp;
+  set_tr(gdt_krn_seg_sel(TSS_ENTRY));
+
+  set_esp(user_kernel_esp);
+  asm volatile("iret\n");
 }
