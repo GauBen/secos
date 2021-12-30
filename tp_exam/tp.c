@@ -77,26 +77,8 @@ void setup_memory_pages(pde32_t *pgd, pte32_t *first_ptb, unsigned int flags)
   set_cr3(pgd);
 }
 
-void sys_counter(uint32_t *counter)
-{
-  asm volatile(
-      "mov %0, %%eax\n"
-      "int $0x80\n"
-      :
-      : "r"(counter));
-}
-
-void userland()
-{
-  uint32_t x = 10;
-  sys_counter(&x);
-  x++;
-  sys_counter(&x);
-  x++;
-  sys_counter(&x);
-  while (1)
-    ;
-}
+void print_counter();
+void increment_counter();
 
 void test_user()
 {
@@ -121,7 +103,7 @@ void test_user()
       : "irm"(gdt_usr_seg_sel(RING3_DATA_ENTRY)), // ss
         "irm"(0x7c0000),                          // esp
         "irm"(gdt_usr_seg_sel(RING3_CODE_ENTRY)), // cs
-        "irm"(&userland)                          // eip
+        "irm"(&print_counter)                     // eip
   );
 }
 
@@ -159,6 +141,8 @@ void setup_interruption_registry()
 
 void tp()
 {
+  debug("%p %p\n", increment_counter, print_counter);
+
   setup_memory_pages((pde32_t *)KERNEL_PGD_ADDR, (pte32_t *)KERNEL_PTB_ADDR, PG_KRN | PG_RW);
   set_cr0(get_cr0() | CR0_PG | CR0_PE);
 
