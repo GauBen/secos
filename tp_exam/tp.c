@@ -81,9 +81,6 @@ void setup_memory_pages(pde32_t *pgd, pte32_t *first_ptb, unsigned int flags)
   set_cr3(pgd);
 }
 
-void print_counter();
-void increment_counter();
-
 void handle_syscall()
 {
   asm volatile("pusha\n");
@@ -104,26 +101,31 @@ void handle_syscall()
       "iret\n");
 }
 
-uint32_t esp = 0x5fffdc;
+uint32_t esp = 0x5fffbc;
+
+void handle_clock_tick_asm();
+asm(
+    "handle_clock_tick_asm:\n"
+    "pusha\n"
+    "call handle_clock_tick\n"
+    "mov %eax, %esp\n"
+    "popa\n"
+    "iret\n");
 
 void handle_clock_tick()
 {
-  // asm volatile("pusha\n");
   debug("tick...\n");
-  esp = esp == 0x5fffdc ? 0x4fffdc : 0x5fffdc;
+  esp = esp == 0x5fffbc ? 0x4fffbc : 0x5fffbc;
 
   // debug("ESP/EBP: %p/%p\n", get_esp(), get_ebp());
-  uint32_t *user_kernel_esp = (uint32_t *)(esp + 20);
+  uint32_t *user_kernel_esp = (uint32_t *)(esp + 52);
   debug("Saved esp: %p\n", *(user_kernel_esp - 2));
 
   tss.s0.ss = gdt_krn_seg_sel(RING0_DATA_ENTRY);
-  tss.s0.esp = esp + 20;
+  tss.s0.esp = (uint32_t)user_kernel_esp;
 
   asm volatile(
-      // "popa\n"
-      "leave\n"
-      "mov %0, %%esp\n"
-      "iret\n"
+      "mov %0, %%eax\n"
       :
       : "r"(esp));
 }
@@ -140,10 +142,11 @@ void setup_interruption_registry()
   idt[0x80].dpl = SEG_SEL_USR;
 
   // Cooperative tasks (for now)
-  int_desc(&idt[0x81], gdt_krn_seg_sel(RING0_CODE_ENTRY), (offset_t)handle_clock_tick);
+  int_desc(&idt[0x81], gdt_krn_seg_sel(RING0_CODE_ENTRY), (offset_t)handle_clock_tick_asm);
   idt[0x81].dpl = SEG_SEL_USR;
 }
 
+/** Prepares memory pages and kernel stack for a user task. */
 void setup_task(uint32_t user_task)
 {
   debug("%p\n", user_task);
@@ -162,6 +165,11 @@ void setup_task(uint32_t user_task)
   *(user_kernel_esp - 5) = user_task;                           // eip
 }
 
+/** Userland tasks. */
+void print_counter();
+void increment_counter();
+
+/** Kernel entry-point. */
 void tp()
 {
   setup_memory_pages((pde32_t *)KERNEL_PGD_ADDR, (pte32_t *)KERNEL_PTB_ADDR, PG_KRN | PG_RW);
