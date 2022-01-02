@@ -42,8 +42,6 @@ void setup_memory_segments()
   };
 
   memset(&tss, 0, sizeof tss);
-  tss.s0.esp = get_ebp();
-  tss.s0.ss = gdt_krn_seg_sel(RING0_DATA_ENTRY);
 
   gdt[0].raw = 0ULL;
   gdt_flat_dsc(&gdt[RING0_CODE_ENTRY], SEG_SEL_KRN, SEG_DESC_CODE_XR);
@@ -106,6 +104,30 @@ void handle_syscall()
       "iret\n");
 }
 
+uint32_t esp = 0x5fffdc;
+
+void handle_clock_tick()
+{
+  // asm volatile("pusha\n");
+  debug("tick...\n");
+  esp = esp == 0x5fffdc ? 0x4fffdc : 0x5fffdc;
+
+  // debug("ESP/EBP: %p/%p\n", get_esp(), get_ebp());
+  uint32_t *user_kernel_esp = (uint32_t *)(esp + 20);
+  debug("Saved esp: %p\n", *(user_kernel_esp - 2));
+
+  tss.s0.ss = gdt_krn_seg_sel(RING0_DATA_ENTRY);
+  tss.s0.esp = esp + 20;
+
+  asm volatile(
+      // "popa\n"
+      "leave\n"
+      "mov %0, %%esp\n"
+      "iret\n"
+      :
+      : "r"(esp));
+}
+
 void setup_interruption_registry()
 {
   idt_reg_t idtr;
@@ -116,6 +138,10 @@ void setup_interruption_registry()
   // Many thanks to Elies (@EyeXion) for this very simple line,
   // yet the cause of about two days of frustration
   idt[0x80].dpl = SEG_SEL_USR;
+
+  // Cooperative tasks (for now)
+  int_desc(&idt[0x81], gdt_krn_seg_sel(RING0_CODE_ENTRY), (offset_t)handle_clock_tick);
+  idt[0x81].dpl = SEG_SEL_USR;
 }
 
 void setup_task(uint32_t user_task)
@@ -129,11 +155,11 @@ void setup_task(uint32_t user_task)
   uint32_t *user_kernel_esp = (uint32_t *)(user_task + USER_KERNEL_STACK_START_OFFSET);
 
   // Prepare the stack for an `iret`
-  *(user_kernel_esp - 1) = gdt_usr_seg_sel(RING3_DATA_ENTRY);
-  *(user_kernel_esp - 2) = user_task + USER_STACK_START_OFFSET;
-  *(user_kernel_esp - 3) = 0;
-  *(user_kernel_esp - 4) = gdt_usr_seg_sel(RING3_CODE_ENTRY);
-  *(user_kernel_esp - 5) = user_task;
+  *(user_kernel_esp - 1) = gdt_usr_seg_sel(RING3_DATA_ENTRY);   // ss
+  *(user_kernel_esp - 2) = user_task + USER_STACK_START_OFFSET; // esp
+  *(user_kernel_esp - 3) = 0;                                   // eflags
+  *(user_kernel_esp - 4) = gdt_usr_seg_sel(RING3_CODE_ENTRY);   // cs
+  *(user_kernel_esp - 5) = user_task;                           // eip
 }
 
 void tp()
@@ -151,10 +177,8 @@ void tp()
   set_fs(gdt_usr_seg_sel(RING3_DATA_ENTRY));
   set_gs(gdt_usr_seg_sel(RING3_DATA_ENTRY));
   tss.s0.ss = gdt_krn_seg_sel(RING0_DATA_ENTRY);
-  uint32_t user_kernel_esp = (uint32_t)increment_counter + USER_KERNEL_STACK_START_OFFSET - 20;
-  tss.s0.esp = user_kernel_esp;
+  tss.s0.esp = get_esp();
   set_tr(gdt_krn_seg_sel(TSS_ENTRY));
 
-  set_esp(user_kernel_esp);
-  asm volatile("iret\n");
+  asm volatile("int $0x81;\n");
 }
