@@ -116,10 +116,11 @@ uint32_t esp = 0x5ffff0 - 52;
 void handle_clock_tick()
 {
   esp = esp == 0x5fffbc ? 0x4fffbc : 0x5fffbc;
-  uint32_t *user_kernel_esp = (uint32_t *)(esp + 52);
+  uint32_t user_kernel_esp = esp + 52;
 
   tss.s0.ss = gdt_krn_seg_sel(RING0_DATA_ENTRY);
-  tss.s0.esp = (uint32_t)user_kernel_esp;
+  tss.s0.esp = user_kernel_esp;
+  set_cr3(user_kernel_esp - USER_KERNEL_STACK_START_OFFSET + USER_PGD_OFFSET);
 
   // Give the new esp back to the trampoline
   asm volatile(
@@ -173,6 +174,20 @@ void tp()
   setup_interruption_registry();
   setup_task((uint32_t)increment_counter);
   setup_task((uint32_t)print_counter);
+
+  // Setup shared memory
+  {
+    pde32_t *pgd = (pde32_t *)(increment_counter + USER_PGD_OFFSET);
+    pte32_t *ptb = (pte32_t *)(increment_counter + USER_PTB_OFFSET + 2 * 4096);
+    pg_set_entry(&pgd[2], PG_USR | PG_RW, page_nr(ptb));
+    pg_set_entry(&ptb[0], PG_USR | PG_RW, page_nr(0x800000));
+  }
+  {
+    pde32_t *pgd = (pde32_t *)(print_counter + USER_PGD_OFFSET);
+    pte32_t *ptb = (pte32_t *)(print_counter + USER_PTB_OFFSET + 2 * 4096);
+    pg_set_entry(&pgd[2], PG_USR | PG_RW, page_nr(ptb));
+    pg_set_entry(&ptb[1], PG_USR | PG_RW, page_nr(0x800000));
+  }
 
   set_ds(gdt_usr_seg_sel(RING3_DATA_ENTRY));
   set_es(gdt_usr_seg_sel(RING3_DATA_ENTRY));
