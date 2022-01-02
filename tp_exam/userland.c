@@ -1,5 +1,6 @@
 #include <types.h>
 #include <syscall.h>
+#include "userland.h"
 
 __attribute__((section(".user1"))) void increment_counter()
 {

@@ -5,6 +5,7 @@
 #include <debug.h>
 #include <segmem.h>
 #include <pagemem.h>
+#include "userland.h"
 
 // Segmentation settings
 #define RING0_CODE_ENTRY 1
@@ -20,7 +21,7 @@ __attribute__((aligned(8))) seg_desc_t gdt[GDT_LIMIT];
 __attribute__((aligned(8))) tss_t tss;
 
 // Paging settings
-#define KERNEL_PGD_ADDR 0x20000
+#define KERNEL_PGD_ADDR 0x200000
 #define KERNEL_PTB_ADDR KERNEL_PGD_ADDR + 0x1000
 
 #define USER_CODE_OFFSET 0x00000
@@ -161,10 +162,6 @@ void setup_task(uint32_t user_task)
   *(user_kernel_esp - 4) = gdt_usr_seg_sel(RING3_CODE_ENTRY);   // CS
   *(user_kernel_esp - 5) = user_task;                           // EIP
 }
-
-/** Userland tasks. */
-void print_counter();
-void increment_counter();
 
 /** Kernel entry-point. */
 void tp()
