@@ -10,7 +10,7 @@ Vous êtes libres de modifier l'intégralité du noyau si vous le jugez nécessa
 
 Permettre un ordonnancement préemptif de 2 tâches (T1 et T2) en ring 3:
 
-- Le code et les données des tâches seront inclus dans le noyau à la compilation, comme nous l'avons fait dans les TPs précédents pour la fonction `userland()`.
+- Le code et les données des tâches seront inclus dans le noyau à la compilation, comme nous l'avons fait dans les TPs précédents pour la fonction `userland()`. ✅
 - Chaque tâche sera représentée par une fonction (ex. `user1()`, `user2()`) exécutant une boucle infinie.
 - La pagination doit être activée:
   - Le noyau est identity mappé ✅
