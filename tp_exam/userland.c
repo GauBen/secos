@@ -9,7 +9,6 @@ __attribute__((section(".user1"))) void increment_counter()
   while (1)
   {
     (*x)++;
-    asm volatile("int $0x81\n");
   }
 }
 
@@ -19,6 +18,5 @@ __attribute__((section(".user2"))) void print_counter()
   while (1)
   {
     sys_counter(x);
-    asm volatile("int $0x81\n");
   }
 }

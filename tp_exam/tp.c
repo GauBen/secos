@@ -1,5 +1,6 @@
 /* GPLv2 (c) Airbus */
 #include <cr.h>
+#include <asm.h>
 #include <info.h>
 #include <intr.h>
 #include <debug.h>
@@ -32,7 +33,9 @@ __attribute__((aligned(8))) tss_t tss;
 #define USER_KERNEL_STACK_OFFSET 0xf0000
 #define USER_KERNEL_STACK_START_OFFSET 0xffff0
 
-extern info_t *info;
+unsigned int num_tasks = 0;
+uint32_t tasks[4] = {};
+int current_task = -1;
 
 /** Enables memory segmentation. */
 void setup_memory_segments()
@@ -110,17 +113,23 @@ asm(
     "popa\n"
     "iret\n");
 
-uint32_t esp = 0x5ffff0 - 52;
-
 /** Simple round-robin scheduler. */
 void handle_clock_tick()
 {
-  esp = esp == 0x5fffbc ? 0x4fffbc : 0x5fffbc;
-  uint32_t user_kernel_esp = esp + 52;
+  debug("tick\n");
+
+  if (num_tasks <= 0)
+    return;
+
+  current_task = (current_task + 1) % num_tasks;
+  uint32_t task = tasks[current_task];
+
+  uint32_t user_kernel_esp = task + USER_KERNEL_STACK_START_OFFSET;
+  uint32_t esp = user_kernel_esp - (4 * 13); // 13 entries were pushed to the stack
 
   tss.s0.ss = gdt_krn_seg_sel(RING0_DATA_ENTRY);
   tss.s0.esp = user_kernel_esp;
-  set_cr3(user_kernel_esp - USER_KERNEL_STACK_START_OFFSET + USER_PGD_OFFSET);
+  set_cr3(task + USER_PGD_OFFSET);
 
   // Give the new esp back to the trampoline
   asm volatile(
@@ -141,14 +150,17 @@ void setup_interruption_registry()
   // yet the cause of about two days of frustration
   idt[0x80].dpl = SEG_SEL_USR;
 
-  // Cooperative tasks (for now)
-  int_desc(&idt[0x81], gdt_krn_seg_sel(RING0_CODE_ENTRY), (offset_t)handle_clock_tick_asm);
-  idt[0x81].dpl = SEG_SEL_USR;
+  // Preemptive multitasking
+  int_desc(&idt[32], gdt_krn_seg_sel(RING0_CODE_ENTRY), (offset_t)handle_clock_tick_asm);
+  idt[32].dpl = SEG_SEL_USR;
 }
 
 /** Prepares memory pages and kernel stack for a user task. */
 void setup_task(uint32_t user_task)
 {
+  tasks[num_tasks] = user_task;
+  num_tasks++;
+
   setup_memory_pages(
       (pde32_t *)(user_task + USER_PGD_OFFSET),
       (pte32_t *)(user_task + USER_PTB_OFFSET),
@@ -159,7 +171,7 @@ void setup_task(uint32_t user_task)
   // Prepare the stack for an `iret`
   *(user_kernel_esp - 1) = gdt_usr_seg_sel(RING3_DATA_ENTRY);   // SS
   *(user_kernel_esp - 2) = user_task + USER_STACK_START_OFFSET; // ESP
-  *(user_kernel_esp - 3) = 0;                                   // Flages
+  *(user_kernel_esp - 3) = EFLAGS_IF;                           // Flags
   *(user_kernel_esp - 4) = gdt_usr_seg_sel(RING3_CODE_ENTRY);   // CS
   *(user_kernel_esp - 5) = user_task;                           // EIP
 }
@@ -171,18 +183,19 @@ void tp()
   set_cr0(get_cr0() | CR0_PG | CR0_PE);
 
   setup_memory_segments();
-  setup_interruption_registry();
   setup_task((uint32_t)increment_counter);
   setup_task((uint32_t)print_counter);
 
-  // Setup shared memory
+  // Set shared memory up
   {
+    // 0x800000 to 0x800000
     pde32_t *pgd = (pde32_t *)(increment_counter + USER_PGD_OFFSET);
     pte32_t *ptb = (pte32_t *)(increment_counter + USER_PTB_OFFSET + 2 * 4096);
     pg_set_entry(&pgd[2], PG_USR | PG_RW, page_nr(ptb));
     pg_set_entry(&ptb[0], PG_USR | PG_RW, page_nr(0x800000));
   }
   {
+    // 0x801000 to 0x800000
     pde32_t *pgd = (pde32_t *)(print_counter + USER_PGD_OFFSET);
     pte32_t *ptb = (pte32_t *)(print_counter + USER_PTB_OFFSET + 2 * 4096);
     pg_set_entry(&pgd[2], PG_USR | PG_RW, page_nr(ptb));
@@ -198,5 +211,6 @@ void tp()
   tss.s0.esp = get_esp();
 
   // Start the first user task
-  asm volatile("int $0x81;\n");
+  setup_interruption_registry();
+  asm volatile("int $32;\n");
 }
